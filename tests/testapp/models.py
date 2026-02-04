@@ -170,6 +170,14 @@ class FKApplication(models.Model):
         pass
 
 
+class MultiStateApplication(Application):
+    another_state = FSMKeyField(DbState, default="new", on_delete=models.CASCADE)
+
+    @transition(field=another_state, source="new", target="published")
+    def another_state_standard(self):
+        pass
+
+
 class BlogPostState(models.IntegerChoices):
     NEW = 0, "New"
     PUBLISHED = 1, "Published"
@@ -240,7 +248,11 @@ class BlogPost(models.Model):
     def restore(self):
         pass
 
-    @transition(field=state, source=[BlogPostState.PUBLISHED, BlogPostState.HIDDEN], target=BlogPostState.STOLEN)
+    @transition(
+        field=state,
+        source=[BlogPostState.PUBLISHED, BlogPostState.HIDDEN],
+        target=BlogPostState.STOLEN,
+    )
     def steal(self):
         pass
 

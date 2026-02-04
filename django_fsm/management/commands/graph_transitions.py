@@ -13,16 +13,24 @@ from django_fsm import FSMFieldMixin
 
 
 def all_fsm_fields_data(model):
-    return [(field, model) for field in model._meta.get_fields() if isinstance(field, FSMFieldMixin)]
+    return [
+        (field, model) for field in model._meta.get_fields() if isinstance(field, FSMFieldMixin)
+    ]
+
+
+def one_fsm_fields_data(model, field_name):
+    return (model._meta.get_field(field_name), model)
 
 
 def node_name(field, state) -> str:
     opts = field.model._meta
-    return "{}.{}.{}.{}".format(opts.app_label, opts.verbose_name.replace(" ", "_"), field.name, state)
+    return "{}.{}.{}.{}".format(
+        opts.app_label, opts.verbose_name.replace(" ", "_"), field.name, state
+    )
 
 
 def node_label(field, state: str | None) -> str:
-    if isinstance(state, (int, bool)) and hasattr(field, "choices") and field.choices:
+    if isinstance(state, int | bool) and hasattr(field, "choices") and field.choices:
         state = dict(field.choices).get(state)
     return force_str(state)
 
@@ -41,12 +49,12 @@ def generate_dot(fields_data, ignore_transitions: list[str] | None = None):  # n
 
             _targets = list(
                 (state for state in transition.target.allowed_states)
-                if isinstance(transition.target, (GET_STATE, RETURN_VALUE))
+                if isinstance(transition.target, GET_STATE | RETURN_VALUE)
                 else (transition.target,)
             )
             source_name_pair = (
                 ((state, node_name(field, state)) for state in transition.source.allowed_states)
-                if isinstance(transition.source, (GET_STATE, RETURN_VALUE))
+                if isinstance(transition.source, GET_STATE | RETURN_VALUE)
                 else ((transition.source, node_name(field, transition.source)),)
             )
             for source, source_name in source_name_pair:
@@ -61,10 +69,22 @@ def generate_dot(fields_data, ignore_transitions: list[str] | None = None):  # n
                     elif transition.source == "+":
                         any_except_targets.add((target, transition.name))
                     else:
-                        add_transition(source, target, transition.name, source_name, field, sources, targets, edges)
+                        add_transition(
+                            source,
+                            target,
+                            transition.name,
+                            source_name,
+                            field,
+                            sources,
+                            targets,
+                            edges,
+                        )
 
         targets.update(
-            {(node_name(field, target), node_label(field, target)) for target, _ in chain(any_targets, any_except_targets)}
+            {
+                (node_name(field, target), node_label(field, target))
+                for target, _ in chain(any_targets, any_except_targets)
+            }
         )
         for target, name in any_targets:
             target_name = node_name(field, target)
@@ -106,7 +126,16 @@ def generate_dot(fields_data, ignore_transitions: list[str] | None = None):  # n
     return result
 
 
-def add_transition(transition_source, transition_target, transition_name, source_name, field, sources, targets, edges):
+def add_transition(
+    transition_source,
+    transition_target,
+    transition_name,
+    source_name,
+    field,
+    sources,
+    targets,
+    edges,
+):
     target_name = node_name(field, transition_target)
     sources.add((source_name, node_label(field, transition_source)))
     targets.add((target_name, node_label(field, transition_target)))
@@ -131,7 +160,8 @@ class Command(BaseCommand):
             "-o",
             action="store",
             dest="outputfile",
-            help="Render output file. Type of output dependent on file extensions. Use png or jpg to render graph to image.",
+            help="Render output file. Type of output depends on file extensions."
+            "Use png or jpg to render graph to image.",
         )
         parser.add_argument(
             "--layout",
@@ -139,7 +169,7 @@ class Command(BaseCommand):
             action="store",
             dest="layout",
             default="dot",
-            help=f"Layout to be used by GraphViz for visualization. Layouts: {get_graphviz_layouts()}.",
+            help=f"Layout to be used by GraphViz for visualization: {get_graphviz_layouts()}.",
         )
         parser.add_argument(
             "--exclude",
@@ -160,20 +190,19 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         fields_data = []
-        if len(args) != 0:
+        if args:
             for arg in args:
-                field_spec = arg.split(".")
-
-                if len(field_spec) == 1:
-                    app = apps.get_app_config(field_spec[0])
-                    for model in apps.get_models(app):
+                match arg.split("."):
+                    case [app_label]:
+                        app = apps.get_app_config(app_label)
+                        for model in apps.get_models(app):
+                            fields_data += all_fsm_fields_data(model)
+                    case [app_label, model_name]:
+                        model = apps.get_model(app_label, model_name)
                         fields_data += all_fsm_fields_data(model)
-                if len(field_spec) == 2:  # noqa: PLR2004
-                    model = apps.get_model(field_spec[0], field_spec[1])
-                    fields_data += all_fsm_fields_data(model)
-                if len(field_spec) == 3:  # noqa: PLR2004
-                    model = apps.get_model(field_spec[0], field_spec[1])
-                    fields_data += all_fsm_fields_data(model)
+                    case [app_label, model_name, field_name]:
+                        model = apps.get_model(app_label, model_name)
+                        fields_data += [one_fsm_fields_data(model, field_name)]
         else:
             for model in apps.get_models():
                 fields_data += all_fsm_fields_data(model)
@@ -183,4 +212,4 @@ class Command(BaseCommand):
         if options["outputfile"]:
             self.render_output(dotdata, **options)
         else:
-            print(dotdata)  # noqa: T201
+            self.stdout.write(str(dotdata))
